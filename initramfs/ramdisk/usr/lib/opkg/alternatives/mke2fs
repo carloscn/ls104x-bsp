@@ -1,0 +1,3 @@
+/usr/sbin/mke2fs
+/usr/bin/busybox 50
+/usr/sbin/mke2fs.e2fsprogs 100

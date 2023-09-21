@@ -1,0 +1,62 @@
+/dts-v1/;
+
+/ {
+        description = "kernel+dtb/fdt fit image";
+        #address-cells = <1>;
+
+        images {
+                kernel {
+                        description = "kernel image";
+                        data = /incbin/("Image.gz");
+                        type = "kernel";
+                        arch = "arm64";
+                        os = "linux";
+                        compression = "gzip";
+			load = <0x94200000>;
+			entry = <0x94200000>;
+			kernel-version = <1>;
+                        hash {
+                                algo = "sha256";
+                        };
+                };
+
+		initrd {
+			description = "initrd for arm64";
+			data = /incbin/("new_initramfs.cpio.gz");
+			type = "ramdisk";
+			arch = "arm64";
+			os = "linux";
+			compression = "gzip";
+			load = <0x80000000>;
+			entry = <0x80000000>;
+			hash {
+				algo = "sha256";
+			};
+		};
+
+                fdt {
+                        description = "dtb blob";
+                        data = /incbin/("fsl-ok1046a-1133-5a59-c2.dtb");
+                        type = "flat_dt";
+                        arch = "arm64";
+                        compression = "none";
+                        load = <0xA0000000>;
+                        fdt-version = <1>;
+                        hash {
+                                algo = "sha256";
+                        };
+                };
+        };
+        configurations {
+                default = "standard";
+                standard {
+                        description = "Standard Boot";
+                        kernel = "kernel";
+                        fdt = "fdt";
+                        ramdisk = "initrd";
+                        hash {
+                                algo = "sha256";
+                        };
+                };
+        };
+};

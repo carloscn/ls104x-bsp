@@ -1,0 +1,16 @@
+#!/bin/sh
+# Copyright (C) 2011 O.S. Systems Software LTDA.
+# Licensed on MIT
+
+rootfs_enabled() {
+	return 0
+}
+
+rootfs_run() {
+        if [ -z "$ROOTFS_DIR" ]; then
+		return
+        fi
+	mount /dev/mmcblk0p3 $ROOTFS_DIR	
+	ls $ROOTFS_DIR
+	echo "[INFO] finish"
+}
