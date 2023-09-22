@@ -5,8 +5,6 @@
 # SPDX-License-Identifier:      BSD-3-Clause
 #
 
-
-
 # mount the /proc and /sys filesystems.
 /bin/mount -t proc none /proc
 /bin/mount -t sysfs none /sys
@@ -31,37 +29,59 @@ echo partnum: $partnum
 /bin/mknod /dev/$mountdev b 179 $partnum
 /bin/mount /dev/$mountdev /mnt
 
-# ima emv mode: fix or enforce
-ima_fix='evm=fix'
+ls /mnt
 
-if echo $a | /bin/grep -q $ima_fix; then
-    echo "Creating keys"
-    /bin/keyctl add secure kmk-master "new 32" @u > /dev/null
-    /bin/keyctl pipe `/bin/keyctl search @u secure kmk-master` > /mnt/etc/secure_key.blob
-    /bin/keyctl add encrypted evm-key "new secure:kmk-master 32" @u > /dev/null
-    /bin/keyctl pipe `/bin/keyctl search @u encrypted evm-key` > /mnt/etc/encrypted_key.blob
-
-    /bin/chmod 1400 /mnt/etc/secure_key.blob
-    /bin/chmod 1400 /mnt/etc/encrypted_key.blob
-    /bin/chattr =i /mnt/etc/secure_key.blob
-    /bin/chattr =i /mnt/etc/encrypted_key.blob
+ls /mnt/ubuntu
+if [ $? -ne 0 ];then
+    echo "[INFO] current is NXP busybox, backup to newroot"
+    rm -rf /mnt/newroot
+    mkdir -p /mnt/newroot
+    mv /mnt/* /mnt/newroot/
+    mv /mnt/newroot/sysroot /mnt/
+    mv /mnt/newroot/ostree /mnt/
+    mv /mnt/sysroot/* /mnt/
+    rm -rf /mnt/newroot
 else
-    echo "Loading blobs"
-    /bin/keyctl add secure kmk-master "load `/bin/cat /mnt/etc/secure_key.blob`" @u > /dev/null
-    /bin/keyctl add encrypted evm-key "load `/bin/cat /mnt/etc/encrypted_key.blob`" @u > /dev/null
+    echo "[INFO] current is ubuntu, backup to sysroot"
+    mkdir -p /mnt/sysroot
+    mv /mnt/* /mnt/sysroot/
+    mv /mnt/sysroot/newroot /mnt/
+    mv /mnt/sysroot/ostree /mnt/
+
+    echo "[INFO] cd /mnt/ostree"
+    cd /mnt/ostree
+    if [ $? -ne 0 ];then
+        echo "[ERR] failed into ostree!"
+        exit 2
+    fi
+
+    echo "[INFO] ostree checkout --repo=repo master sysroot_new"
+    rm -rf sysroot_new
+    ostree checkout --repo=repo master sysroot_new
+    if [ $? -ne 0 ];then
+        echo "[ERR] failed into ostree checkout sysroot_new!"
+        exit 2
+    fi
+
+    sync && sleep 3
+
+    echo "[INFO] ostree log master --repo=repo"
+    ostree log master --repo=repo
+
+    echo "[INFO] mv to new rootfs"
+    mv sysroot_new/* /mnt
+    if [ $? -ne 0 ];then
+        echo "[ERR] mv newroot failed!!"
+        exit 2
+    fi
+
+    sync
+
+    cd -
+    ls /mnt/
 fi
 
-echo "1" > /sys/kernel/security/evm
+sleep 5
 
-if echo $a | /bin/grep -q $ima_fix; then
-    echo "Labelling files in fix mode. This will take few minutes. Reboot once done"
-    usr/bin/find /mnt/ -type f -exec head -c 1 '{}' > /dev/null \;
-    echo "Attributes labeled."
-    #echo b > /proc/sysrq-trigger
-    #/sbin/reboot
-fi
-
-echo "[INFO] test ostree"
-ostree -h
-
+echo "[INFO] exec /bin/busybox switch_root /mnt/sysroot /sbin/init"
 exec /bin/busybox switch_root /mnt /sbin/init
