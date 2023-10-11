@@ -1,0 +1,69 @@
+#!/bin/sh
+#
+# Copyright 2018 NXP
+#
+# SPDX-License-Identifier:      BSD-3-Clause
+#
+
+# mount the /proc and /sys filesystems.
+/bin/mount -n -t proc none /proc
+/bin/mount -n -t sysfs none /sys
+
+a=`/bin/cat /proc/cmdline`
+
+# Mount the root filesystem.
+if ! echo $a | /bin/grep -q 'mount=' ; then
+    # set default mount device if mountdev is not set in othbootargs env
+    mountdev=mmcblk0p3
+    # echo Using default mountdev: $mountdev
+else
+    mountdev=`echo $a | /bin/sed -r 's/.*(mount=[^ ]+) .*/\1/'`
+    echo Using specified mountdev: $mountdev
+fi
+
+partnum=`echo $mountdev | /usr/bin/awk '{print substr($0,length())}'`
+echo partnum: $partnum
+
+MOUNT_P=/new_root
+MOUNT_R=/mnt
+mkdir ${MOUNT_P}
+
+/bin/mknod /dev/$mountdev b 179 $partnum
+/bin/mount -o rw /dev/$mountdev ${MOUNT_P}
+
+ls ${MOUNT_P}
+ls ${MOUNT_P}/update
+if [ $? -ne 0 ];then
+    echo "[INFO] current is NXP busybox (primary image), switch to ubuntu (recovery)"
+    ROOTFS_DIR="${MOUNT_P}"
+else
+    echo "[INFO] current is ubuntu (recovery image), update and switch to primary!"
+    cd ${MOUNT_P}
+    ROOTFS_PATH="${MOUNT_P}/sysroot/ostree/deploy/tcu/deploy"
+    OSTREE_NEWEST_COMMIT=`ostree admin --sysroot=sysroot status | grep tcu | head -n1 | sed 's/tcu //g' | tr -d ' '`
+    ROOTFS_DIR="${ROOTFS_PATH}/${OSTREE_NEWEST_COMMIT}"
+    echo "[INFO] The rootfs dir is : ${ROOTFS_DIR}"
+    ls ${ROOTFS_DIR}
+    if [ $? -ne 0 ];then
+        echo "[INFO] no new rootfs!"
+    else
+        echo "[INFO] found new rootfs!"
+    fi
+fi
+
+# switch_root will fail to function if newroot is not the root of a
+# mount. If you want to switch root into a directory that does not
+# meet this requirement then you can first use a bind-mounting
+# trick to turn any directory into a mount point:
+#       mount --bind $DIR $DIR
+/bin/mount --bind ${ROOTFS_DIR} ${MOUNT_R}
+
+echo "[INFO] mount move proc sys."
+/bin/mount -o move /proc ${MOUNT_R}/proc
+/bin/mount -o move /sys ${MOUNT_R}/sys
+
+sleep 5
+echo "[INFO] exec /bin/busybox switch_root ${MOUNT_R} /sbin/init"
+sleep 1
+exec /bin/busybox switch_root ${MOUNT_R} /sbin/init </dev/console >dev/console 2>&1
+
