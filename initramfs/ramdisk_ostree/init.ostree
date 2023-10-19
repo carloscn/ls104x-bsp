@@ -1,72 +1,127 @@
 #!/bin/sh
+set -eu
 
-# mount the /proc and /sys filesystems.
-/bin/mount -n -t proc none /proc
-/bin/mount -n -t sysfs none /sys
+# -------------------------------------------
 
-a=`/bin/cat /proc/cmdline`
+log_info() { echo "[INFO] $0[$$]: $*" >&2; }
+log_error() { echo "[ERR] $0[$$]: ERROR $*" >&2; }
 
-# Mount the root filesystem.
-if ! echo $a | /bin/grep -q 'mount=' ; then
-    # set default mount device if mountdev is not set in othbootargs env
-    mountdev=mmcblk0p3
-    # echo Using default mountdev: $mountdev
+do_mount_fs() {
+	log_info "mounting FS: $*"
+	[[ -e /proc/filesystems ]] && { grep -q "$1" /proc/filesystems || { log_error "Unknown filesystem"; return 1; } }
+	[[ -d "$2" ]] || mkdir -p "$2"
+	[[ -e /proc/mounts ]] && { grep -q -e "^$1 $2 $1" /proc/mounts && { log_info "$2 ($1) already mounted"; return 0; } }
+	mount -t "$1" "$1" "$2"
+}
+
+bail_out() {
+	log_error "$@"
+	log_info "Rebooting..."
+	#exec reboot -f
+	exec sh
+}
+
+get_ostree_sysroot() {
+	for opt in $(cat /proc/cmdline); do
+		arg=$(echo "$opt" | cut -d'=' -f1)
+		if [ "$arg" == "ostree_root" ]; then
+			echo "$opt" | cut -d'=' -f2-
+			return
+		fi
+	done
+	echo "LABEL=otaroot"
+}
+
+export PATH=/sbin:/usr/sbin:/bin:/usr/bin:/usr/lib/ostree
+
+log_info "Starting OSTree initrd script"
+
+do_mount_fs proc /proc
+do_mount_fs sysfs /sys
+do_mount_fs devtmpfs /dev
+do_mount_fs devpts /dev/pts
+do_mount_fs tmpfs /dev/shm
+do_mount_fs tmpfs /run
+
+# check if smack is active (and if so, mount smackfs)
+grep -q smackfs /proc/filesystems && {
+	do_mount_fs smackfs /sys/fs/smackfs
+
+	# adjust current label and network label
+	echo System >/proc/self/attr/current
+	echo System >/sys/fs/smackfs/ambient
+}
+
+# a=`/bin/cat /proc/cmdline`
+# log_info "the /proc/cmdline is $a"
+# # Mount the root filesystem.
+# if ! echo $a | /bin/grep -q 'mount=' ; then
+#     # set default mount device if mountdev is not set in othbootargs env
+#     mountdev=mmcblk0p3
+#     # echo Using default mountdev: $mountdev
+# else
+#     mountdev=`echo $a | /bin/sed -r 's/.*(mount=[^ ]+) .*/\1/'`
+#     log_info Using specified mountdev: $mountdev
+# fi
+
+# partnum=`echo $mountdev | /usr/bin/awk '{print substr($0,length())}'`
+# log_info partnum: $partnum
+
+# MOUNT_R=/sysroot
+# mkdir -p ${MOUNT_R}
+# if [ $? -ne 0 ];then
+#     bail_out "Unable to mkdir -p ${MOUNT_R}, join to console!"
+# fi
+
+# /bin/mknod /dev/$mountdev b 179 $partnum && /bin/mount -o rw /dev/$mountdev ${MOUNT_R}
+# if [ $? -ne 0 ];then
+# 	# The SD card in the R-Car M3 takes a bit of time to come up
+# 	# Retry the mount if it fails the first time
+# 	log_info "Mounting $ostree_sysroot failed, waiting 5s for the device to be available..."
+# 	sleep 5
+# 	mount /dev/$mountdev ${MOUNT_R} || bail_out "Unable to mount $ostree_sysroot as physical sysroot"
+# fi
+
+MOUNT_R=/sysroot
+mkdir -p ${MOUNT_R}
+ostree_sysroot=$(get_ostree_sysroot)
+
+mount "$ostree_sysroot" ${MOUNT_R} || {
+	# The SD card in the R-Car M3 takes a bit of time to come up
+	# Retry the mount if it fails the first time
+	log_info "Mounting $ostree_sysroot failed, waiting 5s for the device to be available..."
+	sleep 5
+	mount "$ostree_sysroot" ${MOUNT_R} || bail_out "Unable to mount $ostree_sysroot as physical sysroot"
+}
+
+ls ${MOUNT_R}
+if [ $? -ne 0 ];then
+    bail_out "No ${MOUNT_R} directory!! reboot device!"
+fi
+
+sleep 3
+
+echo "[INFO] current is ubuntu (recovery image), update and switch to primary!"
+cd ${MOUNT_R}
+ROOTFS_PATH="${MOUNT_R}/ostree/deploy/tcu/deploy"
+OSTREE_NEWEST_COMMIT=`ostree admin --sysroot=./ status | grep tcu | head -n1 | sed 's/tcu //g' | tr -d ' '`
+ROOTFS_DIR="${ROOTFS_PATH}/${OSTREE_NEWEST_COMMIT}"
+log_info "The rootfs real directory is : ${ROOTFS_DIR}"
+ls ${ROOTFS_DIR}
+if [ $? -ne 0 ];then
+    bail_out "No ${MOUNT_R} directory!! reboot device!"
 else
-    mountdev=`echo $a | /bin/sed -r 's/.*(mount=[^ ]+) .*/\1/'`
-    echo Using specified mountdev: $mountdev
+    log_info "found a new rootfs!"
 fi
 
-partnum=`echo $mountdev | /usr/bin/awk '{print substr($0,length())}'`
-echo partnum: $partnum
+MOUNT_P=/newroot
+mkdir -p ${MOUNT_P}
+mount --bind ${ROOTFS_DIR} ${MOUNT_P}
 
-MOUNT_P=/new_root
-MOUNT_R=/mnt
-mkdir ${MOUNT_P}
-
-/bin/mknod /dev/$mountdev b 179 $partnum && /bin/mount -o rw /dev/$mountdev ${MOUNT_P}
-if [ $? -ne 0 ];then
-    echo "[INFO] mount sd card failed! reboot device!"
-    reboot
-    exit 0
-fi
-
-ls ${MOUNT_P} && ls ${MOUNT_P}/etc > /dev/null
-if [ $? -ne 0 ];then
-    echo "[INFO] No ${MOUNT_P} or ${MOUNT_P}/etc directory!! reboot device!"
-    reboot
-    exit 0
-fi
-
-ls ${MOUNT_P}/update
-if [ $? -ne 0 ];then
-    echo "[INFO] current is NXP busybox (primary image), switch to ubuntu (recovery)"
-    ROOTFS_DIR="${MOUNT_P}"
-else
-    echo "[INFO] current is ubuntu (recovery image), update and switch to primary!"
-    cd ${MOUNT_P}
-    ROOTFS_PATH="${MOUNT_P}/sysroot/ostree/deploy/tcu/deploy"
-    OSTREE_NEWEST_COMMIT=`ostree admin --sysroot=sysroot status | grep tcu | head -n1 | sed 's/tcu //g' | tr -d ' '`
-    ROOTFS_DIR="${ROOTFS_PATH}/${OSTREE_NEWEST_COMMIT}"
-    echo "[INFO] The rootfs real directory is : ${ROOTFS_DIR}"
-    ls ${ROOTFS_DIR}
-    if [ $? -ne 0 ];then
-        echo "[INFO] no rootfs! Go to recovery!"
-        ROOTFS_DIR="${MOUNT_P}"
-    else
-        echo "[INFO] found a new rootfs!"
-    fi
-fi
-
-# switch_root will fail to function if newroot is not the root of a
-# mount. If you want to switch root into a directory that does not
-# meet this requirement then you can first use a bind-mounting
-# trick to turn any directory into a mount point:
-#       mount --bind $DIR $DIR
-/bin/mount --bind ${ROOTFS_DIR} ${MOUNT_R}
-echo "[INFO] mount move proc sys directories."
-/bin/mount -o move /proc ${MOUNT_R}/proc
-/bin/mount -o move /sys ${MOUNT_R}/sys
-
-echo "[INFO] exec /bin/busybox switch_root ${MOUNT_R} /sbin/init"
+log_info "Switching to rootfs"
+log_info "exec /bin/busybox switch_root ${MOUNT_P} /sbin/init"
+exec /bin/busybox switch_root ${MOUNT_P} /sbin/init </dev/console >dev/console 2>&1
 sleep 1
-exec /bin/busybox switch_root ${MOUNT_R} /sbin/init </dev/console >dev/console 2>&1
+bail_out "Failed to switch_root to ${MOUNT_P}"
+
+# setenv bootargs "earlycon=uart8250,mmio,0x21c0500 console=ttyS0,115200 root=/dev/ram0 rw rootfstype=ext4 rootwait rootdelay=2 ostree_root=/dev/mmcblk0p3"
