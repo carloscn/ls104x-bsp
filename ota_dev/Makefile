@@ -5,6 +5,8 @@ export $(shell sed 's/=.*//' ./build.cfg)
 
 SHELL:=/bin/bash
 
+prepare: boost openssl sqlite3 buildroot libs
+
 buildroot:
 	@echo "[INFO] Building ${BUILDROOT}..."
 	@wget --no-check-certificate -nc ${BUILDROOT_ADDR}
@@ -27,6 +29,13 @@ buildroot_use_config:
 	@echo "[INFO] Building ${BUILDROOT}..."
 	@cd ${BUILDROOT} && make
 	@echo "[INFO] ${BUILDROOT} build done!"
+
+libs:
+	-@cd ${BUILDROOT_OUT}/libcurl-8.4.0 && make install DESTDIR=${BUILDROOT_OUT}/libcurl-8.4.0/out
+	-@cd ${BUILDROOT_OUT}/libsodium-1.0.18 && make install DESTDIR=${BUILDROOT_OUT}/libsodium-1.0.18/out
+	-@cd ${BUILDROOT_OUT}/libostree-2023.1 && make install DESTDIR=${BUILDROOT_OUT}/libostree-2023.1/out
+	-@cd ${BUILDROOT_OUT}/libarchive-3.6.2 && make install DESTDIR=${BUILDROOT_OUT}/libarchive-3.6.2/out
+	-@cd ${BUILDROOT_OUT}/libp11-0.4.12 && make install DESTDIR=${BUILDROOT_OUT}/libp11-0.4.12/out
 
 openssl:
 	@echo "[INFO] Building ${LIBSSL} ..."
@@ -100,10 +109,10 @@ boost:
 	@echo "[INFO] Building ${BOOST}..."
 	@wget --no-check-certificate -nc ${BOOST_ADDR}
 	@tar -xvf ${BOOST}.tar.gz
-	@cd ${BOOST} && echo "using gcc : arm : ${HOST_FLAG}-g++ ;" > user_config.jam
+	@cd ${BOOST} && echo "using gcc : arm : ${HOME}/opt/cross-compile/gcc-arm-10.2-2020.11-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-g++ ;" > user_config.jam
 	@echo "[INFO] the out put path is ${BOOST_OUT}"
 	@cd ${BOOST} && ./bootstrap.sh --prefix=${BOOST_OUT}
-	@cd ${BOOST} && ./b2 link=static install toolset=gcc-arm cxxflags=-fPIC \
+	@cd ${BOOST} && ./b2 install toolset=gcc-arm cxxflags=-fPIC \
 						 --with-system \
 						 --with-filesystem \
 						 --with-log \
@@ -120,8 +129,19 @@ boost:
 aktualizr:
 	@echo "[INFO] Building ${AKTUALIZR}..."
 	-@git clone ${AKTUALIZR_ADDR}
+	@source ${PWD}/build.cfg
+	-@cd ${AKTUALIZR} && git submodule update --init --recursive
+	@cd ${AKTUALIZR} && rm -rf build
 	@cd ${AKTUALIZR} && mkdir -p build
-	@cd ${AKTUALIZR}/build && mkdir -p build
+	@cp -rfv ${PWD}/configs/CMakeLists.txt ${AKTUALIZR}/
+	@cp -rfv ${PWD}/configs/cross-aarch64.cmake ${AKTUALIZR}/build/
+	@cd ${AKTUALIZR}/build && cmake -DCMAKE_BUILD_TYPE=Debug -Fcross-aarch64.cmake ../
+	@cd ${AKTUALIZR}/build && make aktualizr_lib
+	@cd ${AKTUALIZR}/build && make aktualizr-c
+	@cd ${AKTUALIZR}/build && mkdir -p out
+	@cp -rfv ${AKTUALIZR}/build/src/libaktualizr-c/libaktualizr-c.so ${AKTUALIZR}/build/out
+	@cp -rfv ${AKTUALIZR}/build/src/libaktualizr/libaktualizr.so ${AKTUALIZR}/build/out
+	@ls -al ${AKTUALIZR}/build/out
 	@echo "[INFO] ${AKTUALIZR} build done!"
 
 clean:
