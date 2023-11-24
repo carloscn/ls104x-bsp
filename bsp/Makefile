@@ -49,8 +49,25 @@ optee:
 	flex-builder -c optee
 	@echo "[INFO] optee build done!"
 
+sign:
+	cd ${WORK_PATH}/flexbuild_lsdk2108 && \
+	source setup.env && \
+	flex-builder -c atf -m ls1043ardb -b sd -s
+	@echo "[INFO] sign build done!"
+
+image:
+	cd ${WORK_PATH}/flexbuild_lsdk2108 && \
+	source setup.env && \
+	flex-builder -i mkfw -m ls1043ardb -b sd -s
+	cp -rfv ${WORK_PATH}/flexbuild_lsdk2108/build/images/firmware_ls1043ardb_sdboot_secure.img ${PWD}
+	cp -rfv ${WORK_PATH}/flexbuild_lsdk2108/build/images/firmware_ls1043ardb_sdboot.img ${PWD}
+	@echo "[INFO] image build done!"
+
 burn_boot:
 	sudo dd if=${WORK_PATH}/flexbuild_lsdk2108/firmware_ls1043ardb_sdboot.img of=${UDISK}
 
 clean:
+	rm -rf *.img
+
+distclean: clean
 	rm -rf ${WORK_PATH}
